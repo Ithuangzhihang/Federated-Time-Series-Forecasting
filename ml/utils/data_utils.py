@@ -34,6 +34,34 @@ def read_data(data_path: str, filter_data: str = None) -> pd.DataFrame:
 
     return df
 
+def read_data_yl(data_path: str, filter_data: str = None) -> pd.DataFrame:
+    """
+    读取 CSV 文件，并可选地按特定的车辆进行筛选。
+
+    参数:
+        data_path (str): 要读取的 CSV 文件路径。
+        filter_data (str, 可选): 要筛选的车辆ID，如果提供，将只加载该车辆的数据。
+
+    返回:
+        pd.DataFrame: 处理后的数据帧，已设置时间索引并转换了数据类型。
+    """
+    # 读取 CSV 文件
+    df = pd.read_csv(data_path)
+    
+    # 如果提供了 filter_data，则只保留该车辆的数据
+    if filter_data is not None:
+        log(INFO, f"Reading data for vehicle ID {filter_data}...")
+        df = df.loc[df['vehicle_id'] == filter_data]
+    
+    # 将 'local_time' 列设置为 DataFrame 的索引，并转换为 datetime 类型
+    df.set_index(pd.to_datetime(df["local_time"]), inplace=True)
+    df.drop(["local_time"], axis=1, inplace=True)  # 删除原始的 'local_time' 列
+    
+    # 将除 'vehicle_id' 外的所有列转换为 float32 类型，以减少内存占用
+    cols = [col for col in df.columns if col != "vehicle_id"]
+    df[cols] = df[cols].astype("float32")
+
+    return df
 
 def handle_nans(train_data: pd.DataFrame,
                 val_data: Optional[pd.DataFrame] = None,
@@ -137,39 +165,45 @@ def handle_outliers(df: pd.DataFrame,
     return df
 
 
-def generate_time_lags(df: pd.DataFrame,
-                       n_lags: int = 10,
-                       identifier: str = "District",
-                       is_y: bool = False) -> pd.DataFrame:
+def generate_time_lags(df: pd.DataFrame, #df：输入的 pandas DataFrame。
+                       n_lags: int = 10, #n_lags：要生成的时间滞后步数，默认为10。
+                       identifier: str = "District", #identifier：标识不同地区或基站的列名，默认为 "District"。
+                       is_y: bool = False) -> pd.DataFrame: #is_y：布尔值，指示当前处理的是目标变量还是输入特征，默认为 False。
     """Transforms a dataframe to time lags using the shift method.
     If the shifting operation concerns the targets, then lags removal is applied, i.e., only the measurements that
     we try to predict are kept in the dataframe. If the shifting operation concerns the previous time steps (our actual
     input), then measurements removal is applied, i.e., the measurements in the first lag are being removed since they
     are the targets that we try to predict."""
-    columns = list(df.columns)
-    dfs = []
+    columns = list(df.columns) #存储 DataFrame 中的所有列名。
+    dfs = [] #用于存储处理后的各地区数据的列表。
 
+    #按地区处理数据
     for area in df[identifier].unique():
-        df_area = df.loc[df[identifier] == area]
-        df_n = df_area.copy()
+        df_area = df.loc[df[identifier] == area] #df_area：过滤出当前地区的数据。
+        df_n = df_area.copy() #df_n：复制当前地区的数据，用于生成滞后特征。
 
+        #生成滞后特征
         for n in range(1, n_lags + 1):
             for col in columns:
                 if col == "time" or col == identifier:
                     continue
-                df_n[f"{col}_lag-{n}"] = df_n[col].shift(n).replace(np.NaN, 0).astype("float64")
-        df_n = df_n.iloc[n_lags:]
+                df_n[f"{col}_lag-{n}"] = df_n[col].shift(n).replace(np.NaN, 0).astype("float64") #shift 方法生成滞后特征，将 NaN 值替换为 0，将新生成的滞后列添加到 df_n 中。
+        df_n = df_n.iloc[n_lags:] #移除前 n_lags 行，因为这些行的滞后特征不完整。
 
-        dfs.append(df_n)
-    df = pd.concat(dfs, ignore_index=False)
+    #合并数据
+        dfs.append(df_n) #将当前地区处理后的 DataFrame 添加到 dfs 列表中。
+    df = pd.concat(dfs, ignore_index=False) #合并所有地区的数据框。
 
+    #处理目标变量或输入特征
+    #如果处理的是目标变量（is_y 为 True），则只保留原始的列。
     if is_y:
         df = df[columns]
+    #如果处理的是输入特征
     else:
         if identifier in columns:
-            columns.remove(identifier)
-        df = df.loc[:, ~df.columns.isin(columns)]
-        df = df[df.columns[::-1]]  # reverse order, e.g. lag-1, lag-2 to lag-2, lag-1.
+            columns.remove(identifier) #移除 identifier 列名。
+        df = df.loc[:, ~df.columns.isin(columns)] #移除原始列，只保留滞后特征列
+        df = df[df.columns[::-1]]  # reverse order, e.g. lag-1, lag-2 to lag-2, lag-1. 反转列的顺序，使滞后特征从最近到最远排列
 
     return df
 
@@ -446,15 +480,21 @@ def to_Xy(train_data: pd.DataFrame,
 
     return X_train, X_val, y_train, y_val
 
-
+#这个函数的目标是生成按区域分割的训练和验证数据帧。函数接受以下参数：
+#X_train: 训练集的特征数据（DataFrame）
+#X_val: 验证集的特征数据（DataFrame）
+#y_train: 训练集的目标数据（DataFrame）
+#y_val: 验证集的目标数据（DataFrame）
+#identifier: 用于标识区域的列名（默认为 "District"）
+#返回值是一个包含四个字典的元组，每个字典的键是区域名，值是相应区域的数据帧
 def get_data_by_area(X_train: pd.DataFrame, X_val: pd.DataFrame,
                      y_train: pd.DataFrame, y_val: pd.DataFrame,
                      identifier: str = "District") -> Tuple[
     Dict[str, pd.DataFrame], Dict[str, pd.DataFrame], Dict[str, pd.DataFrame], Dict[str, pd.DataFrame]]:
     """Generates the training and testing frames per area."""
-    assert list(X_train[identifier].unique()) == list(X_val[identifier].unique())
+    assert list(X_train[identifier].unique()) == list(X_val[identifier].unique()) #确保训练集和验证集的区域是一致的，即训练集和验证集包含相同的区域
 
-    area_X_train, area_X_val, area_y_train, area_y_val = dict(), dict(), dict(), dict()
+    area_X_train, area_X_val, area_y_train, area_y_val = dict(), dict(), dict(), dict() #初始化四个字典，用于存储按区域分割的数据帧
     for area in X_train[identifier].unique():
         # get per area observations
         X_train_area = X_train.loc[X_train[identifier] == area]
