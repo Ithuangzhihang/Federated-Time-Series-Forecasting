@@ -34,7 +34,7 @@ def read_data(data_path: str, filter_data: str = None) -> pd.DataFrame:
 
     return df
 
-def read_data_yl(data_path: str, filter_data: str = None) -> pd.DataFrame:
+def read_data_yl_h(data_path: str, filter_data: str = None) -> pd.DataFrame:
     """
     读取 CSV 文件，并可选地按特定的车辆进行筛选。
 
@@ -54,12 +54,91 @@ def read_data_yl(data_path: str, filter_data: str = None) -> pd.DataFrame:
         df = df.loc[df['vehicle_id'] == filter_data]
     
     # 将 'local_time' 列设置为 DataFrame 的索引，并转换为 datetime 类型
-    df.set_index(pd.to_datetime(df["local_time"]), inplace=True)
-    df.drop(["local_time"], axis=1, inplace=True)  # 删除原始的 'local_time' 列
+    # df.set_index(pd.to_datetime(df["local_time"]), inplace=True)
+    # df.drop(["local_time"], axis=1, inplace=True)  # 删除原始的 'local_time' 列
     
     # 将除 'vehicle_id' 外的所有列转换为 float32 类型，以减少内存占用
     cols = [col for col in df.columns if col != "vehicle_id"]
     df[cols] = df[cols].astype("float32")
+
+    return df
+
+def read_data_yl_y(data_path: str, filter_data: str = None) -> pd.DataFrame:
+    """
+    读取 CSV 文件，并可选地按特定的车辆进行筛选。
+
+    参数:
+        data_path (str): 要读取的 CSV 文件路径。
+        filter_data (str, 可选): 要筛选的车辆ID，如果提供，将只加载该车辆的数据。
+
+    返回:
+        pd.DataFrame: 处理后的数据帧。
+    """
+    # 读取 CSV 文件
+    try:
+        df = pd.read_csv(data_path)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"文件 {data_path} 未找到。")
+    except pd.errors.EmptyDataError:
+        raise ValueError(f"文件 {data_path} 是空的。")
+    except pd.errors.ParserError:
+        raise ValueError(f"文件 {data_path} 解析出错。")
+    
+    # 检查是否提供了 filter_data 并进行过滤
+    if filter_data is not None:
+        if 'vehicle_id' not in df.columns:
+            raise ValueError("数据中没有 'vehicle_id' 列。")
+        df = df.loc[df['vehicle_id'] == filter_data]
+        if df.empty:
+            raise ValueError(f"没有找到车辆ID为 {filter_data} 的数据。")
+    
+    # # 输出每一列中包含非数值型的字符串
+    # for column in df.columns:
+    #     if column != 'missionID' and df[column].dtype == 'object' and not df[column].str.isnumeric().all():
+    #         non_numeric_values = df[column].loc[~df[column].str.isnumeric()]
+    #         print(f"Column '{column}' contains non-numeric values:")
+    #         print(non_numeric_values)
+
+    # 将除 'vehicle_id' 和 'missionID' 外的所有列转换为 float32 类型，以减少内存占用
+    cols = [col for col in df.columns if col not in ["vehicle_id", "missionID","port"]]
+    df[cols] = df[cols].astype("float32")
+
+    return df
+
+def read_data_yl(data_path: str, filter_data: str = None) -> pd.DataFrame:
+    """
+    读取 CSV 文件，并可选地按特定的车辆进行筛选。
+
+    参数:
+        data_path (str): 要读取的 CSV 文件路径。
+        filter_data (str, 可选): 要筛选的车辆ID，如果提供，将只加载该车辆的数据。
+
+    返回:
+        pd.DataFrame: 处理后的数据帧。
+    """
+    # 读取 CSV 文件
+    try:
+        df = pd.read_csv(data_path)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"文件 {data_path} 未找到。")
+    except pd.errors.EmptyDataError:
+        raise ValueError(f"文件 {data_path} 是空的。")
+    except pd.errors.ParserError:
+        raise ValueError(f"文件 {data_path} 解析出错。")
+    
+    # 检查是否提供了 filter_data 并进行过滤
+    if filter_data is not None:
+        if 'port' not in df.columns:
+            raise ValueError("数据中没有 'port' 列。")
+        df = df.loc[df['port'] == filter_data]
+        if df.empty:
+            raise ValueError(f"没有找到车辆ID为 {filter_data} 的数据。")
+    
+    # 将除 'vehicle_id' 和 'missionID' 外的所有数值列转换为 float32 类型，以减少内存占用
+    cols_to_convert = [col for col in df.columns if col not in ["vehicle_id", "missionID", "port"]]
+    for col in cols_to_convert:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].astype("float32")
 
     return df
 
@@ -174,6 +253,48 @@ def generate_time_lags(df: pd.DataFrame, #df：输入的 pandas DataFrame。
     we try to predict are kept in the dataframe. If the shifting operation concerns the previous time steps (our actual
     input), then measurements removal is applied, i.e., the measurements in the first lag are being removed since they
     are the targets that we try to predict."""
+    columns = list(df.columns)  # store all column names in the DataFrame
+    dfs = []  # list to store processed data for each area
+
+    # process data by area
+    for area in df[identifier].unique():
+        df_area = df.loc[df[identifier] == area]  # filter data for the current area
+        df_n = df_area.copy()  # copy the data for generating lagged features
+
+        # generate lagged features
+        for n in range(1, n_lags + 1):
+            for col in columns:
+                if col == identifier:
+                    continue
+                df_n[f"{col}_lag-{n}"] = df_n[col].shift(n).replace(np.NaN, 0).astype("float64")  # generate lagged features
+
+        df_n = df_n.iloc[n_lags:]  # remove the first n_lags rows
+
+        # append the processed DataFrame to the list
+        dfs.append(df_n)
+
+    # concatenate all the processed dataframes
+    df = pd.concat(dfs, ignore_index=False)
+
+    # handle the target variables or input features
+    if is_y:
+        df = df[columns]  # if processing target variables, keep only the original columns
+    else:
+        if identifier in columns:
+            columns.remove(identifier)  # remove identifier from the columns list
+        df = df.loc[:, ~df.columns.isin(columns)]  # remove original columns, keep only lagged features
+        df = df[df.columns[::-1]]  # reverse column order to have lag-1 first
+
+
+def generate_time_lags_yl(df: pd.DataFrame, #df：输入的 pandas DataFrame。
+                       n_lags: int = 10, #n_lags：要生成的时间滞后步数，默认为10。
+                       identifier: str = "port", #identifier：标识不同地区或基站的列名，默认为 "District"。
+                       is_y: bool = False) -> pd.DataFrame: #is_y：布尔值，指示当前处理的是目标变量还是输入特征，默认为 False。
+    """Transforms a dataframe to time lags using the shift method.
+    If the shifting operation concerns the targets, then lags removal is applied, i.e., only the measurements that
+    we try to predict are kept in the dataframe. If the shifting operation concerns the previous time steps (our actual
+    input), then measurements removal is applied, i.e., the measurements in the first lag are being removed since they
+    are the targets that we try to predict."""
     columns = list(df.columns) #存储 DataFrame 中的所有列名。
     dfs = [] #用于存储处理后的各地区数据的列表。
 
@@ -206,7 +327,6 @@ def generate_time_lags(df: pd.DataFrame, #df：输入的 pandas DataFrame。
         df = df[df.columns[::-1]]  # reverse order, e.g. lag-1, lag-2 to lag-2, lag-1. 反转列的顺序，使滞后特征从最近到最远排列
 
     return df
-
 
 def time_to_feature(df: pd.DataFrame,
                     use_time_features: bool = True,
@@ -334,6 +454,22 @@ def remove_identifiers(X_train: pd.DataFrame,
                        X_val: Optional[pd.DataFrame] = None,
                        y_val: Optional[pd.DataFrame] = None,
                        identifier: str = "District") -> Union[
+    Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame], Tuple[pd.DataFrame, pd.DataFrame]]:
+    """Removes a specified column which describes an area/client, e.g., id."""
+    X_train = X_train.drop([identifier], axis=1)
+    y_train = y_train.drop([identifier], axis=1)
+
+    if X_val is not None and y_val is not None:
+        X_val = X_val.drop([identifier], axis=1)
+        y_val = y_val.drop([identifier], axis=1)
+        return X_train, y_train, X_val, y_val
+    return X_train, y_train
+
+def remove_identifiers_yl(X_train: pd.DataFrame,
+                       y_train: pd.DataFrame,
+                       X_val: Optional[pd.DataFrame] = None,
+                       y_val: Optional[pd.DataFrame] = None,
+                       identifier: str = "port") -> Union[
     Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame], Tuple[pd.DataFrame, pd.DataFrame]]:
     """Removes a specified column which describes an area/client, e.g., id."""
     X_train = X_train.drop([identifier], axis=1)
@@ -511,10 +647,62 @@ def get_data_by_area(X_train: pd.DataFrame, X_val: pd.DataFrame,
 
     return area_X_train, area_X_val, area_y_train, area_y_val
 
+def get_data_by_area_yl(X_train: pd.DataFrame, X_val: pd.DataFrame,
+                     y_train: pd.DataFrame, y_val: pd.DataFrame,
+                     identifier: str = "port") -> Tuple[
+    Dict[str, pd.DataFrame], Dict[str, pd.DataFrame], Dict[str, pd.DataFrame], Dict[str, pd.DataFrame]]:
+    """按区域生成训练和测试数据框。"""
+
+    assert list(X_train[identifier].unique()) == list(X_val[identifier].unique()) 
+
+    area_X_train, area_X_val, area_y_train, area_y_val = dict(), dict(), dict(), dict() 
+    for area in X_train[identifier].unique():
+        X_train_area = X_train.loc[X_train[identifier] == area]
+        X_val_area = X_val.loc[X_val[identifier] == area]
+        y_train_area = y_train.loc[y_train[identifier] == area]
+        y_val_area = y_val.loc[y_val[identifier] == area]
+
+        area_X_train[area]: pd.DataFrame = X_train_area
+        area_X_val[area]: pd.DataFrame = X_val_area
+        area_y_train[area]: pd.DataFrame = y_train_area
+        area_y_val[area]: pd.DataFrame = y_val_area
+
+    assert area_X_train.keys() == area_X_val.keys() == area_y_train.keys() == area_y_val.keys()
+
+    return area_X_train, area_X_val, area_y_train, area_y_val
 
 def get_exogenous_data_by_area(exogenous_data_train: pd.DataFrame,
                                exogenous_data_val: Optional[pd.DataFrame] = None,
                                identifier: Optional[str] = "District") -> Union[
+    Tuple[Dict[Union[str, int], pd.DataFrame], Dict[Union[str, int], pd.DataFrame]],
+    Dict[Union[str, int], pd.DataFrame]]:
+    """Generates the exogenous data per area."""
+    if exogenous_data_val is not None:
+        assert list(exogenous_data_val[identifier].unique()) == list(exogenous_data_train[identifier].unique())
+    area_exogenous_data_train, area_exogenous_data_val = dict(), dict()
+    for area in exogenous_data_train[identifier].unique():
+        # get per area observations
+        exogenous_data_train_area = exogenous_data_train.loc[exogenous_data_train[identifier] == area]
+        area_exogenous_data_train[area]: pd.DataFrame = exogenous_data_train_area
+        if exogenous_data_val is not None:
+            exogenous_data_val_area = exogenous_data_val.loc[exogenous_data_val[identifier] == area]
+            area_exogenous_data_val[area]: pd.DataFrame = exogenous_data_val_area
+
+    if exogenous_data_val is not None:
+        assert area_exogenous_data_train.keys() == area_exogenous_data_val.keys()
+    for area in area_exogenous_data_train:
+        area_exogenous_data_train[area] = area_exogenous_data_train[area].drop([identifier], axis=1)
+        if exogenous_data_val is not None:
+            area_exogenous_data_val[area] = area_exogenous_data_val[area].drop([identifier], axis=1)
+
+    if exogenous_data_val is None:
+        return area_exogenous_data_train
+
+    return area_exogenous_data_train, area_exogenous_data_val
+
+def get_exogenous_data_by_area_yl(exogenous_data_train: pd.DataFrame,
+                               exogenous_data_val: Optional[pd.DataFrame] = None,
+                               identifier: Optional[str] = "port") -> Union[
     Tuple[Dict[Union[str, int], pd.DataFrame], Dict[Union[str, int], pd.DataFrame]],
     Dict[Union[str, int], pd.DataFrame]]:
     """Generates the exogenous data per area."""
