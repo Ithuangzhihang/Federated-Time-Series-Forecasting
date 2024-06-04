@@ -340,8 +340,6 @@ def test(model, data, criterion, device="cuda") -> Union[Tuple[float, float, flo
 
     y_true = torch.stack(y_true)
     y_pred = torch.stack(y_pred)
-    print(f"y_true shape: {y_true.shape}")
-    print(f"y_pred shape: {y_pred.shape}")
     mse, rmse, mae, r2, nrmse = accumulate_metric(y_true.cpu(), y_pred.cpu())
     if criterion is None:
         return mse, rmse, mae, r2, nrmse, y_pred
