@@ -12,7 +12,7 @@ if parent not in sys.path:
 
 import numpy as np
 
-from ml.utils.data_utils import to_torch_dataset
+from ml.utils.data_utils_yl import to_torch_dataset
 
 
 def test_timeseries_dataset():
